@@ -1,0 +1,427 @@
+public Program()
+{
+ Runtime.UpdateFrequency = UpdateFrequency.Update100;
+ Echo("Storm's Airlock Control Script\nVersion 3");
+
+ IMyTextSurface textSurface = Me.GetSurface(0);
+ textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
+ textSurface.FontSize = 3.5F;
+ textSurface.Alignment = TextAlignment.CENTER;
+ textSurface.TextPadding = 0.2F;
+ textSurface.WriteText("Airlock\nControl\nVersion 3");
+}
+static string[][] data;
+public void Main(string runcommand)
+{
+ if (!runcommand.Equals(""))
+  {
+   Echo("Storm's Airlock Control Script\nVersion 3\n\n");
+   Object[] newStatus = SplitArgs(runcommand);
+   if ((int)newStatus[0] != -1)
+   {
+    data = ReadCustomData2D();
+    updateData((int)newStatus[0], (string)newStatus[1]);
+    Me.CustomData = joinCustomData2D(data);
+   }
+  }
+ else
+ {
+  data = ReadCustomData2D();
+  updateDoors();
+  Me.CustomData = joinCustomData2D(data);
+ }
+}
+public Object[] SplitArgs(string runcommand)
+{
+ string[] splitruncommand = runcommand.Split('\"');
+ int newStatus = -1;
+ if (splitruncommand.Length == 3)
+ {
+  splitruncommand[2] = splitruncommand[2].Replace(" ", string.Empty);
+  if (string.Equals(splitruncommand[2].ToLower(), "in"))
+  {
+   newStatus = 4;
+  }
+  else if (string.Equals(splitruncommand[2].ToLower(), "out"))
+  {
+   newStatus = 1;
+  }
+  else if(string.Equals(splitruncommand[2].ToLower(), "cycle"))
+  {
+   newStatus = 6;//will just check which way it's going and reverse it
+  }
+ }
+ else if(string.Equals(splitruncommand[0].ToLower(), "help"))
+ {
+  helpText();
+  return new Object[2] { -1, "" };
+ }
+ else
+ {
+  Echo("Can't read arguments. Are they in the Right Format?\n\"Airlock Name\" out/in\nor\n\"all\" out/in");
+  return new Object[2] { -1, "" };
+ }
+ Object[] status = new Object[2] { newStatus, splitruncommand[1] };
+ return status;
+}
+public void updateData(int newStatus, string targetAirlock)
+{
+ for (int row = 0; row < data.Length; row++)
+ {
+  if (targetAirlock.ToLower().Equals("all") || data[row][0].Equals(targetAirlock))
+  {
+   Boolean overRide = true;
+   Boolean limited = false;
+   Boolean auto = false;
+   if (data[row].Length > 5)
+   {
+    for (int command = 4; command < data[row].Length; command++)//check each command
+    {
+     string thisCommand = data[row][command].ToLower();
+     if (thisCommand.Equals("override:off"))
+     {
+      overRide = false;
+     }
+     else if (thisCommand.Equals("override:leave") || thisCommand.Equals("override:limited"))
+     {
+      limited = true;
+     }
+     else if (thisCommand.Equals("override:auto"))
+     {
+      auto = true;
+     }
+    }
+   }
+   int status = Int32.Parse(data[row][data[row].Length - 1]);
+   if (status == newStatus && overRide)//if trying to override the pressurization sequence
+   {
+    if (newStatus == 1)//force depressureize
+    {
+     status = 2;
+    }
+    else if (newStatus == 4 && !limited)//force pressurize
+    {
+     status = 5;
+    }
+   }
+   else if(newStatus == 6)
+   {
+    if (status == 0 || status == 3)
+    {
+     status++;
+    }
+    else if(overRide)
+    {
+     if (status == 1)
+     {
+      status++;
+     }
+     else if(status == 4 && !limited)
+     {
+      status++;
+     }
+    }
+   }
+   else
+   {
+    status = newStatus;
+   }
+   if(auto)
+   {
+    if (status == 1)//force depressureize
+    {
+     status = 2; 
+    }
+    else if (status == 4 && !limited)//force pressurize
+   {
+     status = 5;
+    }
+   }
+   data[row][data[row].Length - 1] = status.ToString();
+  }
+ }
+}
+public void updateDoors()
+{
+ if(data[0][0] == "")
+ {
+  Echo("Custom Data Empty.\n\n");
+  helpText();
+  return;
+ }
+ for (int row = 0; row < data.Length; row++)
+ {
+  int status = -1;
+  bool innergrouped = false;
+  bool outergrouped = false;
+  bool ventsgrouped = false;
+  try
+  {
+   status = Int32.Parse(data[row][data[row].Length - 1]);//gets the current status number
+  }
+  catch
+  {
+   Echo("Status Value missing on row "+(row+1)+"\n");
+   helpText();
+   break;
+  }
+  for (int command = 4; command < data[row].Length; command++)//check each command
+  {
+   string thisCommand = data[row][command].ToLower();
+   if (thisCommand.Equals("grouped:inner"))
+   {
+    innergrouped = true;
+   }
+   else if (thisCommand.Equals("grouped:outer"))
+   {
+    outergrouped = true;
+   }
+   else if (thisCommand.Equals("grouped:air vents") || thisCommand.Equals("grouped:air vent") || thisCommand.Equals("grouped:airvents") || thisCommand.Equals("grouped:airvent"))
+   {
+    ventsgrouped = true;
+   }
+  }
+ status = updateThisDoor(row, status, innergrouped, outergrouped, ventsgrouped); //updates the door
+ data[row][data[row].Length - 1] = status.ToString();//updates the status number in the custom data
+ }
+}
+public int updateThisDoor(int rownumber, int currentStatus, bool innergrouped, bool outergrouped, bool ventsgrouped)
+{
+ try
+ {
+  IMyDoor doorout = null;
+  IMyDoor doorin = null;
+  IMyAirVent airvent = null;
+  List<IMyDoor> outerGroup = new List<IMyDoor>();
+  List<IMyDoor> innerGroup = new List<IMyDoor>();
+  List<IMyAirVent> ventGroup = new List<IMyAirVent>();
+  if (outergrouped)
+  {
+   IMyBlockGroup Group = GridTerminalSystem.GetBlockGroupWithName(data[rownumber][1]);
+   Group.GetBlocksOfType(outerGroup);
+  }
+  else
+  {
+   doorout = GridTerminalSystem.GetBlockWithName(data[rownumber][1]) as IMyDoor;
+  }
+  if (innergrouped)
+  {
+   IMyBlockGroup Group = GridTerminalSystem.GetBlockGroupWithName(data[rownumber][2]);
+   Group.GetBlocksOfType(innerGroup);
+  }
+  else
+  {
+   doorin = GridTerminalSystem.GetBlockWithName(data[rownumber][2]) as IMyDoor;
+  }
+  if (ventsgrouped)
+  {
+   IMyBlockGroup Group = GridTerminalSystem.GetBlockGroupWithName(data[rownumber][3]);
+   Group.GetBlocksOfType(ventGroup);
+  }
+  else
+  {
+   airvent = GridTerminalSystem.GetBlockWithName(data[rownumber][3]) as IMyAirVent;
+  }
+  if (currentStatus == 1 || currentStatus == 2)
+  {
+   bool closed = true;
+   if (innergrouped)
+   {
+    foreach (var door in innerGroup)
+    {
+     if ((float)door.OpenRatio > 0)
+     {
+      door.CloseDoor();
+      closed = false;
+     }
+    }
+   }
+   else
+   {
+    if ((float)doorin.OpenRatio > 0) //if the door is open even a little bit
+    {
+     doorin.CloseDoor();
+     closed = false;
+    }
+   }
+   if (closed)
+   {
+    if (innergrouped)
+    {
+     foreach (var door in innerGroup)
+     {
+      door.Enabled = false;
+     }
+    }
+   else
+   {
+    doorin.Enabled = false; //turn off the door
+   }
+   if (ventsgrouped)
+   {
+    foreach (var vent in ventGroup)
+    {
+     vent.Depressurize = true;
+    }
+    if (ventGroup[0].GetOxygenLevel() <= 0.025 || currentStatus == 2)//if status is 2, force open after inner door closes
+    {
+     if (outergrouped)
+     {
+      foreach (var door in outerGroup)
+      {
+       door.Enabled = true;
+       door.OpenDoor();
+       currentStatus = 3;
+      }
+     }
+     else
+     {
+      doorout.Enabled = true;
+      doorout.OpenDoor();
+      currentStatus = 3;
+     }
+    }
+   }
+   else
+   {
+    airvent.Depressurize = true; //depressureize the airlock vent
+    if (airvent.GetOxygenLevel() <= 0.025 || currentStatus == 2)//if status is 2, force open after inner door closes
+    {
+     if (outergrouped)
+     {
+      foreach (var door in outerGroup)
+      {
+       door.Enabled = true;
+       door.OpenDoor();
+       currentStatus = 3;
+      }
+     }
+     else
+     {
+      doorout.Enabled = true;
+      doorout.OpenDoor();
+      currentStatus = 3;
+     }
+    }
+   }
+  }
+ }
+ //4 is cycling in
+ else if (currentStatus == 4 || currentStatus == 5)
+ {
+  bool closed = true;
+  if (outergrouped)
+  {
+   foreach (var door in outerGroup)
+   {
+    if ((float)door.OpenRatio > 0)
+     {
+      door.CloseDoor();
+      closed = false;
+     }
+    }
+   }
+   else
+   {
+    if ((float)doorout.OpenRatio > 0) //if the door is open even a little bit
+    {
+     doorout.CloseDoor();
+     closed = false;
+    }
+   }
+   if (closed)
+   {
+    if (outergrouped)
+    {
+     foreach (var door in outerGroup)
+     {
+      door.Enabled = false;
+     }
+    }
+    else
+    {
+     doorout.Enabled = false; //turn off the door
+    }
+    if (ventsgrouped)
+    {
+     foreach (var vent in ventGroup)
+     {
+      vent.Depressurize = false;
+     }
+     if (ventGroup[0].GetOxygenLevel() >= 0.975 || currentStatus == 5)//if status is 5, force open after outer door closes
+     {
+      if (innergrouped)
+      {
+       foreach (var door in innerGroup)
+       {
+        door.Enabled = true;
+        door.OpenDoor();
+        currentStatus = 0;
+       }
+      }
+      else
+      {
+       doorin.Enabled = true;
+       doorin.OpenDoor();
+       currentStatus = 0;
+      }
+     }
+    }
+    else
+    {
+     airvent.Depressurize = false; //pressureize the airlock vent
+     if (airvent.GetOxygenLevel() >= 0.975 || currentStatus == 5)//if status is 5, force open after outer door closes
+     {
+      if (innergrouped)
+      {
+       foreach (var door in innerGroup)
+       {
+        door.Enabled = true;
+        door.OpenDoor();
+        currentStatus = 0;
+       }
+      }
+      else
+      {
+       doorin.Enabled = true;
+       doorin.OpenDoor();
+       currentStatus = 0;
+      }
+     }
+    }
+   }
+  }
+ }
+ catch (Exception)
+ {
+  Echo("Status Update Error: Check that Custom Data names match the ones in the terminal.\n(It's Case Sensitive)");
+ }
+ return currentStatus;
+}
+public string[][] ReadCustomData2D()
+{
+ string data = Me.CustomData;
+ string[] parsedData = data.Split('\n');
+ string[][] gridedData = new string[parsedData.Length][];
+ for(int x = 0;x < parsedData.Length;x++)
+ {
+  gridedData[x] = parsedData[x].Split(',');
+ }
+ return gridedData;
+}
+public string joinCustomData2D(string[][] arraydata)
+{
+ string lineData;
+ string[] rowData = new string[arraydata.Length];
+ for (int x = 0; x < arraydata.Length; x++)
+ {
+  lineData = string.Join(",", arraydata[x]);
+  rowData.SetValue(lineData, x);
+ }
+ string finishedData = String.Join("\n", rowData);
+ return finishedData;
+}
+public void helpText()
+{
+ Echo("Custom Data Format:\nAirlock Name,Outer Door,Inner Door,Air Vent,Extra Commands,...,...,-1\n\n---Extra Commands---\nOverRide:off/leave/auto\nGrouped:inner, outer, airvents");
+}
