@@ -1,0 +1,527 @@
+using Sandbox.Game.EntityComponents;
+using Sandbox.ModAPI.Ingame;
+using Sandbox.ModAPI.Interfaces;
+using SpaceEngineers.Game.ModAPI.Ingame;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Mime;
+using System.Runtime.Remoting.Services;
+using System.Text;
+using VRage;
+using VRage.Collections;
+using VRage.Game;
+using VRage.Game.Components;
+using VRage.Game.GUI.TextPanel;
+using VRage.Game.ModAPI.Ingame;
+using VRage.Game.ModAPI.Ingame.Utilities;
+using VRage.Game.ObjectBuilders.Definitions;
+using VRage.Utils;
+using VRageMath;
+
+namespace IngameScript
+{
+    partial class Program : MyGridProgram
+    {
+        // This file contains your actual script.
+        //
+        // You can either keep all your code here, or you can create separate
+        // code files to make your program easier to navigate while coding.
+        //
+        // In order to add a new utility class, right-click on your project, 
+        // select 'New' then 'Add Item...'. Now find the 'Space Engineers'
+        // category under 'Visual C# Items' on the left hand side, and select
+        // 'Utility Class' in the main area. Name it in the box below, and
+        // press OK. This utility class will be merged in with your code when
+        // deploying your final script.
+        //
+        // You can also simply create a new utility class manually, you don't
+        // have to use the template if you don't want to. Just do so the first
+        // time to see what a utility class looks like.
+        // 
+        // Go to:
+        // https://github.com/malware-dev/MDK-SE/wiki/Quick-Introduction-to-Space-Engineers-Ingame-Scripts
+        //
+        // to learn more about ingame scripts
+
+        //Template Script
+
+        //Start Here
+        const double version = 1;
+        const string scriptName = "Stormworks Template Script";
+
+        const int settings_start_row_number = 2;
+        const int data_start_row_number = 4;
+        const string broadCastTag = "SW_template";
+
+        static string[][] data;
+        MyIni inidata = new MyIni();
+        List<IMyDoor> masterList = new List<IMyDoor>();
+
+        IMyBroadcastListener BroadcastListener;
+        StringBuilder stringbuild = new StringBuilder();
+
+        MyIni thisDoor = new MyIni();
+        string customData;
+        string[] parsedData;
+        string[][] gridedData;
+        double uptime;
+        double helpdisplayTime;
+
+        bool updateBlocksThisTick = false;
+
+        public Program()
+        {
+            Runtime.UpdateFrequency = UpdateFrequency.Update10;
+            Echo(scriptName + "\nVersion " + version.ToString() + "\n");
+
+            BroadcastListener = IGC.RegisterBroadcastListener(broadCastTag);
+            BroadcastListener.SetMessageCallback(broadCastTag);
+
+            IMyTextSurface textSurface = Me.GetSurface(0);
+            textSurface.ContentType = ContentType.TEXT_AND_IMAGE;
+            textSurface.FontSize = 3.5F;
+            textSurface.Alignment = TextAlignment.CENTER;
+            textSurface.TextPadding = 0.2F;
+            textSurface.WriteText("Stormworks\nTemplate\nScript");
+
+            loadData();
+        }
+
+        public void Main(string runcommand, UpdateType updateSource)
+        {
+            if (updateBlocksThisTick)//update settings and grab block data from terminal, called every minute or if new data is recieved from another instance of Script
+            {
+                loadData();
+            }
+            //update logic
+            if (updateSource == UpdateType.Update10) //on block auto-update
+            {
+                //Echo("Runtime lag: " + Runtime.LastRunTimeMs.ToString());
+                if (uptime % 1 > 0.9 || uptime % 1 < 0.1)//once a second
+                {
+                    //Do stuff in here
+                }
+                uptime += 1.0 / 6.0;
+                if (helpdisplayTime > 0) { helpdisplayTime -= 1.0 / 6.0; }
+                uptimeEcho(uptime, helpdisplayTime);
+            }
+            else if (updateSource == UpdateType.Trigger || updateSource == UpdateType.Terminal)//on button press
+            {
+                Object[] inputCommand = SplitArgs(runcommand);
+                if ((int)inputCommand[0] != -1)
+                {
+                    //command for on button press
+                }
+            }
+            else if (updateSource == UpdateType.IGC)//if script update was from recieving an IGC communication
+            {
+                while (BroadcastListener.HasPendingMessage)//may have multiple incoming aka multiple blocks communicating at once
+                {
+                    MyIGCMessage incomingMessage = BroadcastListener.AcceptMessage();
+                    if (incomingMessage.Tag == broadCastTag)
+                    {
+                        if (incomingMessage.Data is string)
+                        {
+                            //processIGCdata(incomingMessage.Data.ToString());
+                        }
+                    }
+                }
+                Storage = inidata.ToString();
+                updateBlocksThisTick = true;
+            }
+        }
+
+        public void Save()
+        {
+            inidata.Set("Runtime", "uptime", uptime.ToString());
+            inidata.Set("Runtime", "helpdisplayTime", helpdisplayTime.ToString());
+            Storage = inidata.ToString();
+        }
+
+        //load any data needed for the script, called in program setup and whenever checking for new blocks and whatnot
+        public void loadData()
+        {
+            masterList.Clear();
+            //GridTerminalSystem.GetBlocksOfType<IMyDoor>(masterList);
+            inidata.TryParse(Storage);
+
+            customData = Me.CustomData;
+            if (checkEmptyData()) { return; }
+            parsedData = customData.Split('\n');
+            gridedData = new string[parsedData.Length][];
+            if (checkVersion())
+            {
+                updateDataVersion();
+                updateBlocksThisTick = true;
+                return;
+            }
+            data = ReadCustomData2D(Me.CustomData, true);
+
+            //uptime tracking setup
+            try
+            {
+                uptime = Double.Parse(inidata.Get("Runtime", "uptime").ToString());
+                helpdisplayTime = Double.Parse(inidata.Get("Runtime", "helpdisplayTime").ToString());
+            }
+            catch (Exception e)
+            {
+                uptime = 0;
+                inidata.Set("Runtime", "uptime", 0);
+                inidata.Set("Runtime", "helpdisplayTime", 0);
+                //Echo(e.ToString());
+            }
+            //autoClose = inidata.Get("settings", "auto close").ToBoolean(); Left as examples
+            //opentimer = inidata.Get("settings", "auto close timer").ToInt32();
+
+            updateBlocksThisTick = false;
+        }
+
+        //reads the button input arguments, then splits them and returns the new door state
+        public Object[] SplitArgs(string runcommand)
+        {
+            string[] splitruncommand = runcommand.Split('\"');
+            //when split like this, index 0 == ""
+            int newStatus = -1;
+
+            // Put any commands to run into here
+            if (splitruncommand.Length == 3)
+            {
+                //splitruncommand[2] = splitruncommand[2].Replace(" ", string.Empty);
+                /*
+                if (string.Equals(splitruncommand[2].ToLower(), "in"))
+                {
+                    newStatus = 4;
+                }
+                */
+
+            }
+            else if (string.Equals(splitruncommand[0].ToLower(), "help"))
+            {
+                helpText();
+                helpdisplayTime = 15;
+                return new Object[2] { -1, "" };
+            }
+            else if (string.Equals(splitruncommand[0].ToLower(), "clearcache"))
+            {
+                inidata.Clear();
+                uptime = 0;
+                Storage = "";
+                updateBlocksThisTick = true;
+                return new Object[2] { -1, "" };
+            }
+            else
+            {
+                Echo("Can't read arguments. Are they in the Right Format?");
+                return new Object[2] { -1, "" };
+            }
+
+            Object[] status = new Object[2] { newStatus, splitruncommand[1] };
+            return status;
+        }
+
+        //update internal list of doors to ignore using data from a connected script instance
+        public void processIGCdata(string incomingData)//accepts incoming customdata
+        {
+            //string[][] otherdata = ReadCustomData2D(incomingData, false);
+        }
+
+        //reads the blocks custom data and parses it out into a 2d array
+        public string[][] ReadCustomData2D(string data, bool isthisblock)
+        {
+            string[] parsedData = data.Split('\n');
+            string[][] gridedData = new string[parsedData.Length][];
+
+            for (int row = 0; row < parsedData.Length; row++)
+            {
+                if (row == 0)
+                {
+                    gridedData[row] = parsedData[row].Split('V'); //uses V to split off the version number
+                }
+                else if (row >= settings_start_row_number && row <= data_start_row_number - 2)
+                {
+                    gridedData[row] = parsedData[row].Split(':');
+                    //if (isthisblock) { inidata.Set("settings", gridedData[row][0], gridedData[row][1]); }
+                }
+                else if (row == data_start_row_number - 1)
+                {
+                    gridedData[row] = parsedData[row].Split('!'); //uses ! to not split at all
+                }
+                else if (row >= data_start_row_number)
+                {
+                    gridedData[row] = parsedData[row].Split(',');
+                }
+            }
+            return gridedData;
+        }
+
+        //check if block's starting data is there or not. if not, initialize it.
+        public bool checkEmptyData()
+        {
+            try
+            {
+                if (customData == "")
+                {
+                    Echo("No Data. Initializing...");
+                    string startData = scriptName + " V" + version.ToString() + "\n_____Settings_____\nPut Settings Here\n_____Data Name_____\n";
+
+                    Me.CustomData = startData;
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception E)
+            {
+                Echo(E.ToString());
+                return true;
+            }
+
+        }
+
+        //check if block's data is in the updated format, if not, skip this run and set the data properly
+        public bool checkVersion()
+        {
+            try
+            {
+                gridedData[0] = parsedData[0].Split('V'); //uses V to split off the version number
+
+                if (gridedData[0][1] != version.ToString())
+                {
+                    Echo("Data Version outdata\nSkipping this run to update data formatting");
+
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception E)
+            {
+                //Echo(E.ToString());
+                return true;
+            }
+
+        }
+
+        //updates the data formatting, while preserving the data itself. only works for V4 and up
+        public void updateDataVersion()
+        {
+            string data = Me.CustomData;
+            string[] parsedData = data.Split('\n');
+            string[][] gridedData = new string[parsedData.Length][];
+
+            bool settings = false;
+            int settingsrow = 0;
+            bool hasdata = false;
+            int datarow = 0;
+            int hasVersionNum = 0;
+
+
+            for (int row = 0; row < parsedData.Length; row++)
+            {
+                if (parsedData[row] == "_____Settings_____")
+                {
+                    settings = true;
+                    settingsrow = row + 1;
+                }
+                else if (parsedData[row] == "_____Data Name_____")
+                {
+                    settings = false;
+                    hasdata = true;
+                    datarow = row + 1;
+                }
+                else if (settings)
+                {
+                    gridedData[row] = parsedData[row].Split(':');
+                    inidata.Set("settings", gridedData[row][0], gridedData[row][1]);
+                }
+                else if (hasdata)
+                {
+                    gridedData[row] = parsedData[row].Split(',');
+                }
+            }
+
+            //if it has a version number, it will change whether it adds an extra line or not. (V4.0 doesn't have the V number line at the top
+            try
+            {
+                gridedData[0] = parsedData[0].Split('V'); //uses V to split off the version number
+            }
+            catch (Exception E)
+            {
+                hasVersionNum = 1;
+            }
+
+            //rejoin the data in the correct format
+            string lineData = "";
+            string[] rowData = new string[parsedData.Length + 1 + hasVersionNum];
+
+            for (int row = 0; row < gridedData.Length + hasVersionNum; row++)
+            {
+                Echo(row.ToString());
+                if (row == 0)
+                {
+                    lineData = scriptName + " V" + version.ToString();
+                }
+                else if (row == 1)
+                {
+                    lineData = "_____Settings_____";
+                }
+                else if (row >= settings_start_row_number && row <= data_start_row_number - 2)
+                {
+
+                    lineData = string.Join(":", gridedData[(row - settings_start_row_number) + settingsrow]);
+                }
+                else if (row == data_start_row_number - 1)
+                {
+                    lineData = "_____Data Name_____";
+                }
+                else if (row > data_start_row_number - 1)
+                {
+                    try
+                    {
+                        lineData = string.Join(",", gridedData[(row - data_start_row_number) + datarow]);
+                    }
+                    catch
+                    {
+                        lineData = "E";
+                    }
+                }
+                rowData.SetValue(lineData, row);
+            }
+            string finishedData = String.Join("\n", rowData);
+
+            Me.CustomData = finishedData;
+        }
+
+        //takes the parsed data and shoves it back into one string to be saved back to the block
+        public string joinCustomData2D(string[][] arraydata)
+        {
+            string lineData = "";
+            string[] rowData = new string[arraydata.Length];
+
+            for (int row = 0; row < arraydata.Length; row++)
+            {
+                if (row == 0)
+                {
+                    lineData = scriptName + " V" + version.ToString();
+                }
+                else if (row == 1)
+                {
+                    lineData = "_____Settings_____";
+                }
+                else if (row >= settings_start_row_number && row <= data_start_row_number - 2)
+                {
+                    lineData = string.Join(":", arraydata[row]);
+                }
+                else if (row == data_start_row_number - 1)
+                {
+                    lineData = "_____Data Name_____";
+                }
+                else if (row >= data_start_row_number)
+                {
+                    lineData = string.Join(",", arraydata[row]);
+                }
+                rowData.SetValue(lineData, row);
+            }
+
+            string finishedData = String.Join("\n", rowData);
+
+            return finishedData;
+        }
+
+        //output handler for runtime/uptime tracking
+        public void uptimeEcho(double uptime, double helpdisplayTime)
+        {
+            stringbuild.Clear();
+
+            //uptime output
+            int hrs = 0;
+            int minutes = 0;
+            int seconds;
+            seconds = (int)Math.Round(uptime, 0);
+            if (seconds > 60)
+            {
+                minutes = seconds / 60;
+                seconds -= minutes * 60;
+
+                if (((double)seconds / 60.0 % 1) == 0)
+                {
+                    Echo("Update");
+                    inidata.Set("Runtime", "uptime", uptime.ToString());
+                    inidata.Set("Runtime", "helpdisplayTime", helpdisplayTime.ToString());
+                    Storage = inidata.ToString();
+                    updateBlocksThisTick = true;
+                    //Send out data to other instances of script
+                    IGC.SendBroadcastMessage(broadCastTag, Me.CustomData, TransmissionDistance.ConnectedConstructs);
+                }
+                if (minutes > 60)
+                {
+                    hrs = minutes / 60;
+                    minutes -= hrs * 60;
+
+                    if (hrs == 12)
+                    {
+                        inidata.Clear();
+                        uptime = 0;
+                        Storage = "";
+                        updateBlocksThisTick = true;
+                    }
+                }
+            }
+
+            //Airlock Count
+            //List<MyIniKey> Airlocks = new List<MyIniKey>();
+            //inidata.GetKeys("Airlock Control Numbers", Airlocks);
+
+            //helpDisplay Timer
+            int helpUptime = (int)Math.Round(helpdisplayTime, 0);
+
+            //Run Displays
+            stringbuild.Append(scriptName + "\nVersion ");
+            stringbuild.Append(version);
+            stringbuild.AppendLine();
+
+            stringbuild.Append("Uptime: ");
+            if (minutes > 0)
+            {
+                if (hrs > 0)
+                {
+                    stringbuild.Append(hrs);
+                    stringbuild.Append(" hrs, ");
+                }
+                else
+                {
+                    stringbuild.Append(minutes);
+                    stringbuild.Append(" mins, ");
+                }
+            }
+            stringbuild.Append(seconds);
+            stringbuild.Append(" seconds");
+            stringbuild.AppendLine();
+
+            if (hrs == 11 && minutes >= 50)
+            {
+                stringbuild.Append("Block Auto Cache Clear will occurr at the 12 hour mark.");
+                stringbuild.AppendLine();
+            }
+
+            //stringbuild.Append(Airlocks.Count.ToString());
+            //stringbuild.Append(" Airlocks Managed");
+
+            stringbuild.AppendLine();
+
+            Echo(stringbuild.ToString());
+
+            if (helpUptime > 0)
+            {
+                helpText();
+            }
+        }
+
+        //easy access for the help text pastable
+        public void helpText()
+        {
+            Echo("\n---Command Help---\nCustom Data Format:\n");
+        }
+        //End Here
+    }
+}
